@@ -54,8 +54,11 @@ pip install -U pip
 pip install -e .
 
 python -m volume_backup_sorter
+```
 
-Building standalone executables
+---
+
+## Building standalone executables
 
 Standalone binaries are built using PyInstaller.
 Each platform must be built on its own operating system.
@@ -63,6 +66,7 @@ Each platform must be built on its own operating system.
 Build artifacts (dist/, build/) are intentionally not committed to the repository.
 Linux (onefile, GUI)
 
+```bash
 python3 -m venv venv
 source venv/bin/activate
 
@@ -78,13 +82,16 @@ pyinstaller \
   --name volume-backup-sorter \
   --collect-all PyQt6 \
   volume_backup_sorter/__main__.py
+```
 
-Result:
-
+### Result:
 dist/volume-backup-sorter
 
-macOS (onefile, GUI)
+---
 
+## macOS (onefile, GUI)
+
+```bash
 python3 -m venv venv
 source venv/bin/activate
 
@@ -101,12 +108,20 @@ pyinstaller \
   --collect-all PyQt6 \
   volume_backup_sorter/__main__.py
 
-First run (Gatekeeper):
+```
 
+### First run (Gatekeeper):
+
+```bash
 xattr -dr com.apple.quarantine dist/volume-backup-sorter
 
-Windows (onefile, GUI)
+```
 
+---
+
+## Windows (onefile, GUI)
+
+```bash
 py -m venv venv
 .\venv\Scripts\activate
 
@@ -123,13 +138,16 @@ pyinstaller `
   --name volume-backup-sorter `
   --collect-all PyQt6 `
   volume_backup_sorter\__main__.py
+```
 
-Result:
-
+### Result:
 dist\volume-backup-sorter.exe
 
-Project structure
+---
 
+## Project structure
+
+```bash
 volume_backup_sorter/
 ├── app.py
 ├── cli.py
@@ -149,8 +167,10 @@ volume_backup_sorter/
     ├── rule_editor.py
     ├── settings_dialog.py
     └── widgets.py
+```
+---
 
-Publishing
+## Publishing
 
     GitHub repository contains source code only
 
@@ -158,7 +178,9 @@ Publishing
 
     PyPI package: planned
 
-License
+---
+
+## License
 
 This project is licensed under the MIT License.
 
@@ -166,3 +188,5 @@ You are free to use, modify, and distribute this software.
 There is no warranty; use it at your own risk.
 
 See the LICENSE file for the full license text.
+
+---
