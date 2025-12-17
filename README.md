@@ -124,7 +124,7 @@ pyinstaller `
   --collect-all PyQt6 `
   volume_backup_sorter\__main__.py
 
-# optimised (testing in progress)
+# optimised (testing in progress) (UPX required)
 pyinstaller --noconfirm --clean volume-backup-sorter-windows.spec
 
 ```

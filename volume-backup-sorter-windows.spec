@@ -37,7 +37,7 @@ a = Analysis(
     hookspath=[],
     runtime_hooks=[],
     excludes=excludes,
-    noarchive=True,  # onedir + schnellerer Import-Startup
+    noarchive=True, 
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
@@ -50,8 +50,8 @@ exe = EXE(
     name="volume-backup-sorter",
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,      # Windows: strip bringt meist nix; kann sogar stressen
-    upx=True,         # nur wenn UPX installiert ist
+    strip=False,      # strip not useful
+    upx=True,         # UPX required
     console=False,    # GUI
     # icon="assets/app.ico",   # optional
 )
@@ -61,7 +61,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,         # nur wenn UPX installiert ist
+    upx=True,         # upx required
     name="volume-backup-sorter"
 )
 
