@@ -18,3 +18,7 @@ venv/
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm
+
+# built
+build/
+dist/
