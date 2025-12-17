@@ -249,6 +249,8 @@ class BackupWorker(QThread):
                         self._mirror_keep.add(dest)
 
                     dest_final = unique_dest_path(dest, self.profile.conflict, src_hash)
+                    if self.profile.mode == BackupMode.MIRROR_TREE:
+                        self._mirror_keep.add(dest_final)
 
                     if self._path_reserved(dest_final):
                         dest_final = unique_dest_path(dest_final, ConflictStrategy.RENAME_COUNTER, src_hash)
@@ -406,4 +408,3 @@ class BackupWorker(QThread):
                     except Exception:
                         pass
         return deleted
-
