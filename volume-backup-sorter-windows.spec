@@ -42,7 +42,7 @@ def keep_qt_translations_only(toc, keep_langs):
     return TOC(out)
 
 # Set to True ONLY if you accept AV false positives and you have UPX installed.
-USE_UPX = True
+USE_UPX = False
 
 a = Analysis(
     [ENTRY],
