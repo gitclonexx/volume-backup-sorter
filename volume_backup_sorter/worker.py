@@ -1,207 +1,409 @@
 from __future__ import annotations
 
 import os
-import shutil
 import threading
+from dataclasses import dataclass
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, Future
+from typing import Iterable
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from .db import FileIndexDB
-from .hashing import hash_file
+from .models import Profile, BackupMode, ConflictStrategy, SymlinkMode, now_utc
+from .hashing import sha256_file
+from .fsops import (
+    file_info,
+    unique_dest_path,
+    safe_copy_file,
+    copy_symlink,
+    should_follow_symlink,
+)
+from .index_db import IndexDB
+from .planner import iter_files, dest_for_rules, dest_for_mirror, infer_source_roots
+from .loggers import build_logger
+
+
+@dataclass
+class RunResult:
+    copied: int = 0
+    skipped_duplicates: int = 0
+    skipped_missing_sources: int = 0
+    deleted_mirror: int = 0
+    bytes_copied: int = 0
 
 
 class BackupWorker(QThread):
     message = pyqtSignal(str)
-    finished = pyqtSignal()
     error = pyqtSignal(str)
+    finished = pyqtSignal(object)  # RunResult
     progress = pyqtSignal(int, int)  # current, total
+    phase = pyqtSignal(str)
 
-    def __init__(self, target_dir: str, source_paths: list[str], parent=None):
+    def __init__(self, profile: Profile, target_dir: str, sources: list[str], dry_run: bool, parent=None):
         super().__init__(parent)
-        self.target_dir = Path(target_dir).expanduser().resolve()
-        self.source_paths = [str(Path(p).expanduser()) for p in source_paths]
-        self._stop_event = threading.Event()
+        self.profile = profile
+        self.target_root = Path(target_dir).expanduser().resolve()
+        self.sources = sources[:]
+        self.dry_run = dry_run
 
-        self.total_files = 0
-        self.processed_files = 0
+        self._stop = threading.Event()
+        self._log = build_logger()
 
-        self.copied = 0
-        self.skipped_duplicates = 0
-        self.skipped_missing = 0
+        self._db_path = self.target_root / ".vbs_index.sqlite"
+        self._db: IndexDB | None = None
 
-        self.db_path = self.target_dir / ".nas_backup_index.sqlite"
-        self.db: FileIndexDB | None = None
+        self._total = 0
+        self._done = 0
+
+        self._known_hashes: dict[str, Path] = {}
+        self._reserved_hashes: set[str] = set()
+        self._reserved_paths: set[Path] = set()
+        self._lock = threading.Lock()
 
     def stop(self) -> None:
-        self._stop_event.set()
+        self._stop.set()
 
     def _stopped(self) -> bool:
-        return self._stop_event.is_set()
+        return self._stop.is_set()
 
-    def _count_source_files(self) -> int:
-        count = 0
-        for src in self.source_paths:
-            p = Path(src)
-            try:
-                if p.is_file():
-                    count += 1
-                elif p.is_dir():
-                    for _, _, files in os.walk(p):
-                        count += len(files)
-            except Exception:
-                # zählt dann halt nicht sauber, ist ok
-                pass
-        return count
+    def _emit(self, s: str) -> None:
+        self.message.emit(s)
+        try:
+            self._log.info(s)
+        except Exception:
+            pass
 
-    def _iter_source_files(self):
-        for src in self.source_paths:
+    def _open_db(self) -> None:
+        self._db = IndexDB(self._db_path)
+        self._db.open()
+
+    def _close_db(self) -> None:
+        if self._db:
+            self._db.close()
+            self._db = None
+
+    def _index_target(self) -> None:
+        # Build known hashes from target using DB cache
+        assert self._db is not None
+        self.phase.emit("index")
+
+        existing: set[Path] = set()
+        self._emit("Indexing target (DB cache)…")
+
+        for root, _, files in os.walk(self.target_root):
             if self._stopped():
                 return
-            p = Path(src)
+            for name in files:
+                p = (Path(root) / name).resolve()
+
+                # Skip index DB and WAL files
+                if p.name.startswith(self._db_path.name):
+                    continue
+
+                existing.add(p)
+                try:
+                    st = p.stat()
+                    rec = self._db.get(p)
+                    if rec and rec.size == st.st_size and rec.mtime == st.st_mtime and rec.sha256:
+                        h = rec.sha256
+                    else:
+                        # Compute hash for target file once
+                        h = sha256_file(p, chunk_size=self.profile.perf.hash_chunk_mb * 1024 * 1024)
+                        self._db.set(p, st.st_size, st.st_mtime, h)
+                    self._known_hashes.setdefault(h, p)
+                except Exception:
+                    continue
+
+        try:
+            removed = self._db.cleanup_missing(existing)
+            if removed:
+                self._emit(f"DB cleanup removed {removed} stale rows.")
+        except Exception:
+            pass
+
+        self._emit(f"Target index ready. Unique files: {len(self._known_hashes)}")
+
+    def _count_sources(self) -> tuple[int, int]:
+        missing = 0
+        total = 0
+        follow = should_follow_symlink(self.profile.symlinks)
+
+        for raw in self.sources:
+            p = Path(raw).expanduser()
             if not p.exists():
-                self.skipped_missing += 1
-                self.message.emit(f"[Übersprungen] Quelle existiert nicht: {p}")
+                missing += 1
                 continue
-
             if p.is_file():
-                yield p
+                total += 1
             elif p.is_dir():
-                self.message.emit(f"Verarbeite Ordner: {p}")
-                for root, _, files in os.walk(p):
-                    if self._stopped():
-                        return
-                    for name in files:
-                        yield Path(root) / name
+                for _, _, files in os.walk(p):
+                    total += len(files)
+        return total, missing
 
-    def _unique_path(self, path: Path) -> Path:
-        if not path.exists():
-            return path
+    def _hash_source(self, src: Path) -> str:
+        return sha256_file(src, chunk_size=self.profile.perf.hash_chunk_mb * 1024 * 1024)
 
-        directory = path.parent
-        base = path.stem
-        ext = path.suffix
+    def _reserve_hash(self, h: str) -> bool:
+        with self._lock:
+            if h in self._known_hashes or h in self._reserved_hashes:
+                return False
+            self._reserved_hashes.add(h)
+            return True
 
-        counter = 1
-        while True:
-            candidate = directory / f"{base}_{counter}{ext}"
-            if not candidate.exists():
-                return candidate
-            counter += 1
+    def _reserve_path(self, p: Path) -> None:
+        with self._lock:
+            self._reserved_paths.add(p)
 
-    def _get_or_compute_hash_for_target(self, path: Path, known_hashes: dict[str, Path]) -> str:
-        assert self.db is not None
-        st = path.stat()
-        rec = self.db.get(path)
-
-        if rec and rec.size == st.st_size and rec.mtime == st.st_mtime and rec.sha256:
-            file_hash = rec.sha256
-        else:
-            file_hash = hash_file(path)
-            self.db.set(path, st.st_size, st.st_mtime, file_hash)
-
-        known_hashes.setdefault(file_hash, path)
-        return file_hash
+    def _path_reserved(self, p: Path) -> bool:
+        with self._lock:
+            return p in self._reserved_paths
 
     def run(self) -> None:
+        res = RunResult()
         try:
-            if not self.target_dir.is_dir():
-                self.error.emit("Zielordner existiert nicht oder ist kein Ordner.")
+            if not self.target_root.is_dir():
+                self.error.emit("Target folder does not exist or is not a folder.")
+                self.finished.emit(res)
                 return
 
-            self.db = FileIndexDB(self.db_path)
-            self.db.open()
+            # Count first for stable progress
+            self._total, missing = self._count_sources()
+            res.skipped_missing_sources = missing
+            self._done = 0
+            self.progress.emit(self._done, max(1, self._total))
 
-            self.total_files = self._count_source_files()
-            self.processed_files = 0
-            self.progress.emit(self.processed_files, self.total_files)
+            # Open DB and index target for dedup modes
+            self._open_db()
+            if self.profile.mode in (BackupMode.ARCHIVE_RULES, BackupMode.INCREMENTAL_RULES):
+                self._index_target()
 
-            # Ziel indexieren
-            self.message.emit("Indexiere bestehende Dateien im Ziel (DB-Cache, kann dauern)...")
-            known_hashes: dict[str, Path] = {}
-            paths_in_target: set[Path] = set()
+            follow_links = should_follow_symlink(self.profile.symlinks)
 
-            for root, _, files in os.walk(self.target_dir):
-                if self._stopped():
-                    return
-                for name in files:
-                    dest_path = (Path(root) / name).resolve()
+            # Mirror needs source roots
+            roots = infer_source_roots(self.sources)
 
-                    # DB-Datei überspringen (inkl. Journal/WAL)
-                    if dest_path == self.db_path:
+            # Prepare executors
+            hash_workers = self.profile.perf.hash_threads
+            copy_workers = self.profile.perf.copy_threads
+
+            self.phase.emit("plan")
+
+            # Mirror delete set
+            mirror_keep: set[Path] = set()
+
+            with ThreadPoolExecutor(max_workers=hash_workers) as hash_pool, ThreadPoolExecutor(max_workers=copy_workers) as copy_pool:
+                in_flight: set[Future] = set()
+
+                def submit_hash(p: Path):
+                    fut = hash_pool.submit(self._hash_source, p)
+                    fut._src_path = p  # type: ignore[attr-defined]
+                    return fut
+
+                def handle_one(src_path: Path, src_hash: str):
+                    nonlocal res
+                    if self._stopped():
+                        return
+
+                    # Incremental filter
+                    if self.profile.mode == BackupMode.INCREMENTAL_RULES and self.profile.last_run_utc:
+                        try:
+                            if src_path.stat().st_mtime <= self.profile.last_run_utc:
+                                self._emit(f"[Skip incremental] {src_path}")
+                                return
+                        except Exception:
+                            pass
+
+                    # Dedup check
+                    if self.profile.mode in (BackupMode.ARCHIVE_RULES, BackupMode.INCREMENTAL_RULES):
+                        if not self._reserve_hash(src_hash):
+                            res.skipped_duplicates += 1
+                            self._emit(f"[Skip duplicate] {src_path}")
+                            return
+
+                        try:
+                            size = src_path.stat().st_size
+                        except Exception:
+                            size = 0
+                        dest = dest_for_rules(self.profile, self.target_root, src_path, size)
+
+                    else:
+                        # Mirror mode
+                        # Choose first matching root for relative path
+                        root = None
+                        for r in roots:
+                            try:
+                                if src_path.resolve().is_relative_to(r.resolve()):  # py3.9+ has no; py3.11 ok
+                                    root = r
+                                    break
+                            except Exception:
+                                # fallback: try manual
+                                try:
+                                    src_path.resolve().relative_to(r.resolve())
+                                    root = r
+                                    break
+                                except Exception:
+                                    continue
+                        if root is None:
+                            root = roots[0] if roots else src_path.parent
+
+                        dest = dest_for_mirror(self.target_root, root, src_path)
+                        mirror_keep.add(dest)
+
+                    # Conflict resolution
+                    dest_final = unique_dest_path(dest, self.profile.conflict, src_hash)
+
+                    # Reserve path to avoid two tasks writing same dest
+                    if self._path_reserved(dest_final):
+                        # Fallback to counter strategy
+                        dest_final = unique_dest_path(dest_final, ConflictStrategy.RENAME_COUNTER, src_hash)
+                    self._reserve_path(dest_final)
+
+                    # SKIP on conflict strategy
+                    if dest.exists() and self.profile.conflict == ConflictStrategy.SKIP:
+                        self._emit(f"[Skip exists] {src_path} -> {dest_final}")
+                        return
+
+                    # Dry run: no write
+                    if self.dry_run:
+                        try:
+                            res.bytes_copied += src_path.stat().st_size
+                        except Exception:
+                            pass
+                        res.copied += 1
+                        self._emit(f"[Would copy] {src_path} -> {dest_final}")
+                        return
+
+                    # Copy work
+                    def do_copy():
+                        nonlocal res
+                        if self._stopped():
+                            return
+
+                        # Symlink handling
+                        if src_path.is_symlink():
+                            if self.profile.symlinks == SymlinkMode.SKIP:
+                                return
+                            if self.profile.symlinks == SymlinkMode.LINK:
+                                copy_symlink(src_path, dest_final)
+                            else:
+                                # FOLLOW: copy real file
+                                safe_copy_file(src_path, dest_final, self.profile.preserve_metadata)
+                        else:
+                            safe_copy_file(src_path, dest_final, self.profile.preserve_metadata)
+
+                        try:
+                            res.bytes_copied += src_path.stat().st_size
+                        except Exception:
+                            pass
+                        res.copied += 1
+
+                        # Update DB for dest in dedup modes
+                        if self.profile.mode in (BackupMode.ARCHIVE_RULES, BackupMode.INCREMENTAL_RULES):
+                            assert self._db is not None
+                            try:
+                                st = dest_final.stat()
+                                self._db.set(dest_final, st.st_size, st.st_mtime, src_hash)
+                            except Exception:
+                                pass
+
+                        # Publish hash in known set to prevent same run duplicates
+                        with self._lock:
+                            self._known_hashes[src_hash] = dest_final
+
+                        self._emit(f"[Copied] {src_path} -> {dest_final}")
+
+                    copy_pool.submit(do_copy)
+
+                # Fill pipeline
+                follow = should_follow_symlink(self.profile.symlinks)
+                for src in iter_files(self.sources, follow_symlinks=follow):
+                    if self._stopped():
+                        break
+                    if not src.exists():
                         continue
-                    if dest_path.name.startswith(self.db_path.name):
-                        # .sqlite-journal/.sqlite-wal/.sqlite-shm etc.
-                        continue
-
-                    paths_in_target.add(dest_path)
+                    # Only hash regular files (skip dirs)
                     try:
-                        self._get_or_compute_hash_for_target(dest_path, known_hashes)
-                    except Exception as e:
-                        self.message.emit(f"[Fehler beim Hashen im Ziel] {dest_path}: {e}")
+                        if not src.is_file() and not src.is_symlink():
+                            continue
+                    except Exception:
+                        continue
 
-            self.db.cleanup(paths_in_target)
-            self.message.emit(f"Index fertig. {len(known_hashes)} eindeutige Dateien im Ziel.")
+                    # Keep a small queue
+                    fut = submit_hash(src)
+                    in_flight.add(fut)
 
-            # Quellen verarbeiten
-            for src_path in self._iter_source_files():
-                if self._stopped():
-                    return
-                self._process_file(src_path, known_hashes)
+                    while len(in_flight) >= max(4, hash_workers * 3):
+                        if self._stopped():
+                            break
+                        done = next(iter(in_flight))
+                        if not done.done():
+                            done.result(timeout=None)
+                        in_flight.remove(done)
+                        sp = getattr(done, "_src_path", None)
+                        if sp is None:
+                            continue
+                        try:
+                            h = done.result()
+                        except Exception:
+                            continue
+                        handle_one(sp, h)
 
-            self.message.emit(
-                f"Fertig. Kopiert: {self.copied}, "
-                f"Dubletten übersprungen: {self.skipped_duplicates}, "
-                f"Fehlende Quellen: {self.skipped_missing}"
-            )
+                        self._done += 1
+                        self.progress.emit(self._done, max(1, self._total))
+
+                # Drain remaining hashes
+                for fut in list(in_flight):
+                    if self._stopped():
+                        break
+                    sp = getattr(fut, "_src_path", None)
+                    try:
+                        h = fut.result()
+                    except Exception:
+                        h = ""
+                    if sp and h:
+                        handle_one(sp, h)
+                    self._done += 1
+                    self.progress.emit(self._done, max(1, self._total))
+
+            # Mirror delete phase
+            if not self.dry_run and self.profile.mode == BackupMode.MIRROR_TREE and not self._stopped():
+                self.phase.emit("delete")
+                self._emit("Mirror delete phase…")
+                deleted = self._mirror_delete(mirror_keep)
+                res.deleted_mirror = deleted
+                if deleted:
+                    self._emit(f"Deleted {deleted} files in mirror mode.")
+
+            # Update profile last run
+            if not self.dry_run and not self._stopped():
+                self.profile.last_run_utc = now_utc()
+
+            self.phase.emit("done")
+            self._emit("Done.")
 
         except Exception as e:
-            self.error.emit(f"Unerwarteter Fehler: {e}")
+            self.error.emit(f"Unexpected error: {e}")
         finally:
             try:
-                if self.db is not None:
-                    self.db.close()
+                self._close_db()
             finally:
-                self.finished.emit()
+                self.finished.emit(res)
 
-    def _process_file(self, src_path: Path, known_hashes: dict[str, Path]) -> None:
-        if self._stopped():
-            return
-        if not src_path.is_file():
-            return
-
-        self.processed_files += 1
-        self.progress.emit(self.processed_files, self.total_files)
-
-        try:
-            file_hash = hash_file(src_path)
-        except Exception as e:
-            self.message.emit(f"[Fehler beim Hashen] {src_path}: {e}")
-            return
-
-        if file_hash in known_hashes:
-            self.skipped_duplicates += 1
-            self.message.emit(f"[Duplikat übersprungen] {src_path}")
-            return
-
-        ext = src_path.suffix.lower().lstrip(".") or "no_extension"
-        dest_subdir = self.target_dir / ext
-        dest_subdir.mkdir(parents=True, exist_ok=True)
-
-        dest_path = dest_subdir / src_path.name
-        dest_path = self._unique_path(dest_path)
-
-        try:
-            shutil.copy2(src_path, dest_path)
-            self.copied += 1
-
-            # In DB schreiben (mit Hash vom Source, passt weil copy2 identisch)
-            assert self.db is not None
-            st = dest_path.stat()
-            self.db.set(dest_path, st.st_size, st.st_mtime, file_hash)
-
-            known_hashes[file_hash] = dest_path
-            self.message.emit(f"[Kopiert] {src_path} -> {dest_path}")
-        except Exception as e:
-            self.message.emit(f"[Fehler beim Kopieren] {src_path} -> {dest_path}: {e}")
+    def _mirror_delete(self, keep: set[Path]) -> int:
+        # Delete files under target that are not in keep set
+        deleted = 0
+        for root, _, files in os.walk(self.target_root):
+            if self._stopped():
+                break
+            for name in files:
+                p = (Path(root) / name).resolve()
+                if p.name.startswith(self._db_path.name):
+                    continue
+                if p not in keep:
+                    try:
+                        p.unlink()
+                        deleted += 1
+                    except Exception:
+                        pass
+        return deleted
 

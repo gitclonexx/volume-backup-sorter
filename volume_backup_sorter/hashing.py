@@ -4,13 +4,14 @@ import hashlib
 from pathlib import Path
 
 
-def hash_file(path: Path, chunk_size: int = 4 * 1024 * 1024) -> str:
+def sha256_file(path: Path, chunk_size: int) -> str:
+    # Read in chunks to keep memory low
     h = hashlib.sha256()
     with path.open("rb") as f:
         while True:
-            chunk = f.read(chunk_size)
-            if not chunk:
+            b = f.read(chunk_size)
+            if not b:
                 break
-            h.update(chunk)
+            h.update(b)
     return h.hexdigest()
 

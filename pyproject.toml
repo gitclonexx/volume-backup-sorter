@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "volume-backup-sorter"
+version = "0.3.0"
+description = "Cross-platform backup sorter with rules, profiles, and deduplication"
+requires-python = ">=3.10"
+dependencies = ["PyQt6>=6.6"]
+
+[project.scripts]
+volume-backup-sorter = "volume_backup_sorter.cli:main"
+
+[tool.setuptools]
+packages = ["volume_backup_sorter", "volume_backup_sorter.ui"]

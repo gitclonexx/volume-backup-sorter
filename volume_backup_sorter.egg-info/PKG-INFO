@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: volume-backup-sorter
+Version: 0.3.0
+Summary: Cross-platform backup sorter with rules, profiles, and deduplication
+Requires-Python: >=3.10
+Requires-Dist: PyQt6>=6.6

@@ -3,15 +3,19 @@ from __future__ import annotations
 import sys
 from PyQt6.QtWidgets import QApplication
 
-from .main_window import MainWindow
+from .config_store import load_config
+from .i18n import I18N
+from .ui.main_window import MainWindow
 
 
-def run() -> int:
+def run_gui() -> int:
     app = QApplication(sys.argv)
-    # Fusion wirkt meist “cleaner” als native, ohne dein Theme komplett zu zerstören
     app.setStyle("Fusion")
 
-    w = MainWindow()
+    cfg = load_config()
+    i18n = I18N(cfg.language)
+
+    w = MainWindow(cfg, i18n)
     w.show()
     return app.exec()
 

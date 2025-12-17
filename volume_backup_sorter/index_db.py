@@ -6,28 +6,35 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
-class FileRecord:
+class DbRecord:
     size: int
     mtime: float
     sha256: str
 
 
-class FileIndexDB:
+class IndexDB:
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self.conn: sqlite3.Connection | None = None
-        self._pending_writes = 0
+        self._pending = 0
 
     def open(self) -> None:
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.db_path))
         cur = self.conn.cursor()
+
+        # Speed-friendly defaults for local cache
+        cur.execute("PRAGMA journal_mode=WAL;")
+        cur.execute("PRAGMA synchronous=NORMAL;")
+        cur.execute("PRAGMA temp_store=MEMORY;")
+
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS files (
                 path   TEXT PRIMARY KEY,
-                size   INTEGER,
-                mtime  REAL,
-                sha256 TEXT
+                size   INTEGER NOT NULL,
+                mtime  REAL NOT NULL,
+                sha256 TEXT NOT NULL
             )
             """
         )
@@ -35,7 +42,7 @@ class FileIndexDB:
         self.conn.commit()
 
     def close(self) -> None:
-        if self.conn is None:
+        if not self.conn:
             return
         try:
             self.conn.commit()
@@ -44,42 +51,38 @@ class FileIndexDB:
         self.conn.close()
         self.conn = None
 
-    def get(self, path: Path) -> FileRecord | None:
+    def get(self, path: Path) -> DbRecord | None:
         assert self.conn is not None
         cur = self.conn.cursor()
-        cur.execute(
-            "SELECT size, mtime, sha256 FROM files WHERE path = ?",
-            (str(path),),
-        )
+        cur.execute("SELECT size, mtime, sha256 FROM files WHERE path = ?", (str(path),))
         row = cur.fetchone()
         if not row:
             return None
-        return FileRecord(size=row[0], mtime=row[1], sha256=row[2] or "")
+        return DbRecord(int(row[0]), float(row[1]), str(row[2]))
 
     def set(self, path: Path, size: int, mtime: float, sha256: str) -> None:
         assert self.conn is not None
         cur = self.conn.cursor()
         cur.execute(
-            "INSERT OR REPLACE INTO files (path, size, mtime, sha256) VALUES (?, ?, ?, ?)",
-            (str(path), size, mtime, sha256),
+            "INSERT OR REPLACE INTO files(path, size, mtime, sha256) VALUES (?, ?, ?, ?)",
+            (str(path), int(size), float(mtime), str(sha256)),
         )
-        self._pending_writes += 1
-        if self._pending_writes >= 100:
+        self._pending += 1
+        if self._pending >= 200:
             self.conn.commit()
-            self._pending_writes = 0
+            self._pending = 0
 
-    def cleanup(self, valid_paths: set[Path]) -> None:
-        """Entfernt DB-Einträge für Dateien, die im Ziel nicht mehr existieren."""
+    def cleanup_missing(self, existing_paths: set[Path]) -> int:
+        # Remove rows for files that do not exist anymore
         assert self.conn is not None
-        valid = {str(p) for p in valid_paths}
-
         cur = self.conn.cursor()
         cur.execute("SELECT path FROM files")
         rows = cur.fetchall()
-
-        to_delete = [row[0] for row in rows if row[0] not in valid]
+        keep = {str(p) for p in existing_paths}
+        to_delete = [r[0] for r in rows if r[0] not in keep]
         if not to_delete:
-            return
-
+            return 0
         cur.executemany("DELETE FROM files WHERE path = ?", ((p,) for p in to_delete))
         self.conn.commit()
+        return len(to_delete)
+
