@@ -76,7 +76,7 @@ pyinstaller \
   --collect-all PyQt6 \
   volume_backup_sorter/__main__.py
 
-# optimised (recommended) (UPX required)
+# optimised (recommended)
 pyinstaller --clean volume-backup-sorter-linux.spec
 
 ```
@@ -103,7 +103,7 @@ pyinstaller --clean volume-backup-sorter-macos.spec
 
 ```
 
-### First run (Gatekeeper) (quarantine):
+### First run (Gatekeeper) (in case of quarantine):
 
 ```bash
 xattr -dr com.apple.quarantine dist/volume-backup-sorter
@@ -124,7 +124,7 @@ pyinstaller `
   --collect-all PyQt6 `
   volume_backup_sorter\__main__.py
 
-# optimised (testing in progress) (UPX required)
+# optimised (testing in progress) (turn upx on in the volume-backup-sorter-windows.spec file)
 pyinstaller --clean volume-backup-sorter-windows.spec
 
 ```
