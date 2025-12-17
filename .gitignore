@@ -13,7 +13,7 @@ venv/
 .idea/
 .vscode/
 
-# SQLite (falls du die DB nicht versionieren willst)
+# SQL-Lite
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal
@@ -23,3 +23,11 @@ venv/
 build/
 dist/
 builtinformation.txt
+
+# standard
+.env
+*.env
+.env.*
+secrets.*
+*.key
+*.pem
