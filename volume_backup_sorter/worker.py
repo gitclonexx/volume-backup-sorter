@@ -5,14 +5,15 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Iterable
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from .models import Profile, BackupMode, ConflictStrategy, SymlinkMode, now_utc
+from .models import (
+    Profile, BackupMode, ConflictStrategy, SymlinkMode,
+    MirrorDeleteScope, now_utc
+)
 from .hashing import sha256_file
 from .fsops import (
-    file_info,
     unique_dest_path,
     safe_copy_file,
     copy_symlink,
@@ -25,6 +26,7 @@ from .loggers import build_logger
 
 @dataclass
 class RunResult:
+    total_sources: int = 0
     copied: int = 0
     skipped_duplicates: int = 0
     skipped_missing_sources: int = 0
@@ -60,6 +62,8 @@ class BackupWorker(QThread):
         self._reserved_paths: set[Path] = set()
         self._lock = threading.Lock()
 
+        self._mirror_keep: set[Path] = set()
+
     def stop(self) -> None:
         self._stop.set()
 
@@ -83,7 +87,6 @@ class BackupWorker(QThread):
             self._db = None
 
     def _index_target(self) -> None:
-        # Build known hashes from target using DB cache
         assert self._db is not None
         self.phase.emit("index")
 
@@ -95,8 +98,6 @@ class BackupWorker(QThread):
                 return
             for name in files:
                 p = (Path(root) / name).resolve()
-
-                # Skip index DB and WAL files
                 if p.name.startswith(self._db_path.name):
                     continue
 
@@ -107,7 +108,6 @@ class BackupWorker(QThread):
                     if rec and rec.size == st.st_size and rec.mtime == st.st_mtime and rec.sha256:
                         h = rec.sha256
                     else:
-                        # Compute hash for target file once
                         h = sha256_file(p, chunk_size=self.profile.perf.hash_chunk_mb * 1024 * 1024)
                         self._db.set(p, st.st_size, st.st_mtime, h)
                     self._known_hashes.setdefault(h, p)
@@ -126,8 +126,6 @@ class BackupWorker(QThread):
     def _count_sources(self) -> tuple[int, int]:
         missing = 0
         total = 0
-        follow = should_follow_symlink(self.profile.symlinks)
-
         for raw in self.sources:
             p = Path(raw).expanduser()
             if not p.exists():
@@ -158,6 +156,26 @@ class BackupWorker(QThread):
         with self._lock:
             return p in self._reserved_paths
 
+    def _mirror_base_root(self) -> Path:
+        if self.profile.mirror_delete_scope == MirrorDeleteScope.SUBFOLDER:
+            sub = (self.profile.mirror_scope_subdir or "mirror").strip() or "mirror"
+            base = (self.target_root / sub).resolve()
+        else:
+            base = self.target_root.resolve()
+
+        try:
+            base.relative_to(self.target_root.resolve())
+        except Exception:
+            base = self.target_root.resolve()
+        return base
+
+    def _delete_allowed(self, p: Path) -> bool:
+        wl = {x.lower().lstrip(".") for x in (self.profile.mirror_delete_ext_whitelist or []) if str(x).strip()}
+        if not wl:
+            return True
+        ext = p.suffix.lower().lstrip(".")
+        return ext in wl
+
     def run(self) -> None:
         res = RunResult()
         try:
@@ -166,30 +184,23 @@ class BackupWorker(QThread):
                 self.finished.emit(res)
                 return
 
-            # Count first for stable progress
             self._total, missing = self._count_sources()
+            res.total_sources = self._total
             res.skipped_missing_sources = missing
             self._done = 0
             self.progress.emit(self._done, max(1, self._total))
 
-            # Open DB and index target for dedup modes
             self._open_db()
             if self.profile.mode in (BackupMode.ARCHIVE_RULES, BackupMode.INCREMENTAL_RULES):
                 self._index_target()
 
-            follow_links = should_follow_symlink(self.profile.symlinks)
-
-            # Mirror needs source roots
             roots = infer_source_roots(self.sources)
+            mirror_base = self._mirror_base_root()
 
-            # Prepare executors
             hash_workers = self.profile.perf.hash_threads
             copy_workers = self.profile.perf.copy_threads
 
-            self.phase.emit("plan")
-
-            # Mirror delete set
-            mirror_keep: set[Path] = set()
+            self.phase.emit("run")
 
             with ThreadPoolExecutor(max_workers=hash_workers) as hash_pool, ThreadPoolExecutor(max_workers=copy_workers) as copy_pool:
                 in_flight: set[Future] = set()
@@ -204,7 +215,6 @@ class BackupWorker(QThread):
                     if self._stopped():
                         return
 
-                    # Incremental filter
                     if self.profile.mode == BackupMode.INCREMENTAL_RULES and self.profile.last_run_utc:
                         try:
                             if src_path.stat().st_mtime <= self.profile.last_run_utc:
@@ -213,57 +223,41 @@ class BackupWorker(QThread):
                         except Exception:
                             pass
 
-                    # Dedup check
                     if self.profile.mode in (BackupMode.ARCHIVE_RULES, BackupMode.INCREMENTAL_RULES):
                         if not self._reserve_hash(src_hash):
                             res.skipped_duplicates += 1
                             self._emit(f"[Skip duplicate] {src_path}")
                             return
-
                         try:
                             size = src_path.stat().st_size
                         except Exception:
                             size = 0
                         dest = dest_for_rules(self.profile, self.target_root, src_path, size)
-
                     else:
-                        # Mirror mode
-                        # Choose first matching root for relative path
                         root = None
                         for r in roots:
                             try:
-                                if src_path.resolve().is_relative_to(r.resolve()):  # py3.9+ has no; py3.11 ok
-                                    root = r
-                                    break
+                                src_path.resolve().relative_to(r.resolve())
+                                root = r
+                                break
                             except Exception:
-                                # fallback: try manual
-                                try:
-                                    src_path.resolve().relative_to(r.resolve())
-                                    root = r
-                                    break
-                                except Exception:
-                                    continue
+                                continue
                         if root is None:
                             root = roots[0] if roots else src_path.parent
 
-                        dest = dest_for_mirror(self.target_root, root, src_path)
-                        mirror_keep.add(dest)
+                        dest = dest_for_mirror(mirror_base, root, src_path)
+                        self._mirror_keep.add(dest)
 
-                    # Conflict resolution
                     dest_final = unique_dest_path(dest, self.profile.conflict, src_hash)
 
-                    # Reserve path to avoid two tasks writing same dest
                     if self._path_reserved(dest_final):
-                        # Fallback to counter strategy
                         dest_final = unique_dest_path(dest_final, ConflictStrategy.RENAME_COUNTER, src_hash)
                     self._reserve_path(dest_final)
 
-                    # SKIP on conflict strategy
                     if dest.exists() and self.profile.conflict == ConflictStrategy.SKIP:
                         self._emit(f"[Skip exists] {src_path} -> {dest_final}")
                         return
 
-                    # Dry run: no write
                     if self.dry_run:
                         try:
                             res.bytes_copied += src_path.stat().st_size
@@ -273,20 +267,17 @@ class BackupWorker(QThread):
                         self._emit(f"[Would copy] {src_path} -> {dest_final}")
                         return
 
-                    # Copy work
                     def do_copy():
                         nonlocal res
                         if self._stopped():
                             return
 
-                        # Symlink handling
                         if src_path.is_symlink():
                             if self.profile.symlinks == SymlinkMode.SKIP:
                                 return
                             if self.profile.symlinks == SymlinkMode.LINK:
                                 copy_symlink(src_path, dest_final)
                             else:
-                                # FOLLOW: copy real file
                                 safe_copy_file(src_path, dest_final, self.profile.preserve_metadata)
                         else:
                             safe_copy_file(src_path, dest_final, self.profile.preserve_metadata)
@@ -297,7 +288,6 @@ class BackupWorker(QThread):
                             pass
                         res.copied += 1
 
-                        # Update DB for dest in dedup modes
                         if self.profile.mode in (BackupMode.ARCHIVE_RULES, BackupMode.INCREMENTAL_RULES):
                             assert self._db is not None
                             try:
@@ -306,7 +296,6 @@ class BackupWorker(QThread):
                             except Exception:
                                 pass
 
-                        # Publish hash in known set to prevent same run duplicates
                         with self._lock:
                             self._known_hashes[src_hash] = dest_final
 
@@ -314,50 +303,43 @@ class BackupWorker(QThread):
 
                     copy_pool.submit(do_copy)
 
-                # Fill pipeline
                 follow = should_follow_symlink(self.profile.symlinks)
                 for src in iter_files(self.sources, follow_symlinks=follow):
                     if self._stopped():
                         break
-                    if not src.exists():
-                        continue
-                    # Only hash regular files (skip dirs)
                     try:
+                        if not src.exists():
+                            continue
                         if not src.is_file() and not src.is_symlink():
                             continue
                     except Exception:
                         continue
 
-                    # Keep a small queue
                     fut = submit_hash(src)
                     in_flight.add(fut)
 
                     while len(in_flight) >= max(4, hash_workers * 3):
                         if self._stopped():
                             break
-                        done = next(iter(in_flight))
-                        if not done.done():
-                            done.result(timeout=None)
-                        in_flight.remove(done)
-                        sp = getattr(done, "_src_path", None)
-                        if sp is None:
-                            continue
+                        fut2 = next(iter(in_flight))
+                        in_flight.remove(fut2)
+                        sp = getattr(fut2, "_src_path", None)
                         try:
-                            h = done.result()
+                            h = fut2.result()
                         except Exception:
-                            continue
-                        handle_one(sp, h)
+                            h = ""
+                        if sp and h:
+                            handle_one(sp, h)
 
                         self._done += 1
                         self.progress.emit(self._done, max(1, self._total))
 
-                # Drain remaining hashes
-                for fut in list(in_flight):
+                for fut2 in list(in_flight):
                     if self._stopped():
                         break
-                    sp = getattr(fut, "_src_path", None)
+                    sp = getattr(fut2, "_src_path", None)
                     try:
-                        h = fut.result()
+                        h = fut2.result()
                     except Exception:
                         h = ""
                     if sp and h:
@@ -365,16 +347,18 @@ class BackupWorker(QThread):
                     self._done += 1
                     self.progress.emit(self._done, max(1, self._total))
 
-            # Mirror delete phase
-            if not self.dry_run and self.profile.mode == BackupMode.MIRROR_TREE and not self._stopped():
-                self.phase.emit("delete")
-                self._emit("Mirror delete phase…")
-                deleted = self._mirror_delete(mirror_keep)
-                res.deleted_mirror = deleted
-                if deleted:
-                    self._emit(f"Deleted {deleted} files in mirror mode.")
+            if self.profile.mode == BackupMode.MIRROR_TREE and not self._stopped():
+                if self.profile.mirror_delete_scope == MirrorDeleteScope.NO_DELETE:
+                    res.deleted_mirror = 0
+                else:
+                    if self.dry_run:
+                        res.deleted_mirror = self._mirror_count_deletions(mirror_base, self._mirror_keep)
+                        self._emit(f"[Would delete] {res.deleted_mirror} files (mirror)")
+                    else:
+                        res.deleted_mirror = self._mirror_delete(mirror_base, self._mirror_keep)
+                        if res.deleted_mirror:
+                            self._emit(f"Deleted {res.deleted_mirror} files (mirror).")
 
-            # Update profile last run
             if not self.dry_run and not self._stopped():
                 self.profile.last_run_utc = now_utc()
 
@@ -389,17 +373,33 @@ class BackupWorker(QThread):
             finally:
                 self.finished.emit(res)
 
-    def _mirror_delete(self, keep: set[Path]) -> int:
-        # Delete files under target that are not in keep set
-        deleted = 0
-        for root, _, files in os.walk(self.target_root):
+    def _mirror_count_deletions(self, base: Path, keep: set[Path]) -> int:
+        if not base.exists():
+            return 0
+        cnt = 0
+        for root, _, files in os.walk(base):
             if self._stopped():
                 break
             for name in files:
                 p = (Path(root) / name).resolve()
                 if p.name.startswith(self._db_path.name):
                     continue
-                if p not in keep:
+                if p not in keep and self._delete_allowed(p):
+                    cnt += 1
+        return cnt
+
+    def _mirror_delete(self, base: Path, keep: set[Path]) -> int:
+        if not base.exists():
+            return 0
+        deleted = 0
+        for root, _, files in os.walk(base):
+            if self._stopped():
+                break
+            for name in files:
+                p = (Path(root) / name).resolve()
+                if p.name.startswith(self._db_path.name):
+                    continue
+                if p not in keep and self._delete_allowed(p):
                     try:
                         p.unlink()
                         deleted += 1

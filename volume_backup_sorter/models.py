@@ -26,16 +26,22 @@ class SymlinkMode:
     LINK = "link"
 
 
+class MirrorDeleteScope:
+    SUBFOLDER = "subfolder"
+    WHOLE_TARGET = "whole_target"
+    NO_DELETE = "no_delete"
+
+
 @dataclass
 class Rule:
     enabled: bool = True
     name: str = "Rule"
     target_folder: str = "misc"
 
-    extensions: list[str] = field(default_factory=list)      # like ["jpg", "png"]
-    mime_prefixes: list[str] = field(default_factory=list)   # like ["image/", "video/"]
-    name_regex: str = ""                                     # regex on filename
-    path_contains: str = ""                                  # substring on full path
+    extensions: list[str] = field(default_factory=list)
+    mime_prefixes: list[str] = field(default_factory=list)
+    name_regex: str = ""
+    path_contains: str = ""
     size_min_mb: int = 0
     size_max_mb: int = 0
 
@@ -48,11 +54,15 @@ class Rule:
         for k, v in d.items():
             if hasattr(r, k):
                 setattr(r, k, v)
-        # normalize
+
         r.extensions = [str(x).lower().lstrip(".") for x in (r.extensions or []) if str(x).strip()]
         r.mime_prefixes = [str(x).lower() for x in (r.mime_prefixes or []) if str(x).strip()]
         r.target_folder = (r.target_folder or "misc").strip() or "misc"
         r.name = (r.name or "Rule").strip() or "Rule"
+        r.name_regex = (r.name_regex or "").strip()
+        r.path_contains = (r.path_contains or "").strip()
+        r.size_min_mb = int(r.size_min_mb or 0)
+        r.size_max_mb = int(r.size_max_mb or 0)
         return r
 
 
@@ -88,6 +98,12 @@ class Profile:
     preserve_metadata: bool = True
     auto_open_target: bool = False
 
+    mirror_delete_scope: str = MirrorDeleteScope.SUBFOLDER
+    mirror_scope_subdir: str = "mirror"
+
+    # If not empty, mirror delete only affects these extensions
+    mirror_delete_ext_whitelist: list[str] = field(default_factory=list)
+
     rules: list[Rule] = field(default_factory=list)
     perf: PerformanceOptions = field(default_factory=PerformanceOptions)
 
@@ -102,6 +118,9 @@ class Profile:
             "symlinks": self.symlinks,
             "preserve_metadata": bool(self.preserve_metadata),
             "auto_open_target": bool(self.auto_open_target),
+            "mirror_delete_scope": str(self.mirror_delete_scope),
+            "mirror_scope_subdir": str(self.mirror_scope_subdir),
+            "mirror_delete_ext_whitelist": list(self.mirror_delete_ext_whitelist or []),
             "rules": [r.to_dict() for r in self.rules],
             "perf": self.perf.to_dict(),
             "last_run_utc": float(self.last_run_utc),
@@ -117,9 +136,25 @@ class Profile:
         p.symlinks = str(d.get("symlinks") or p.symlinks)
         p.preserve_metadata = bool(d.get("preserve_metadata", True))
         p.auto_open_target = bool(d.get("auto_open_target", False))
+
+        p.mirror_delete_scope = str(d.get("mirror_delete_scope") or MirrorDeleteScope.SUBFOLDER)
+        p.mirror_scope_subdir = str(d.get("mirror_scope_subdir") or "mirror").strip() or "mirror"
+
+        wl = d.get("mirror_delete_ext_whitelist") or []
+        if isinstance(wl, str):
+            wl = [x.strip() for x in wl.split(",")]
+        p.mirror_delete_ext_whitelist = [str(x).lower().lstrip(".") for x in wl if str(x).strip()]
+
         p.rules = [Rule.from_dict(x) for x in (d.get("rules") or [])]
         p.perf = PerformanceOptions.from_dict(d.get("perf") or {})
         p.last_run_utc = float(d.get("last_run_utc") or 0.0)
+
+        if p.mirror_delete_scope not in (
+            MirrorDeleteScope.SUBFOLDER,
+            MirrorDeleteScope.WHOLE_TARGET,
+            MirrorDeleteScope.NO_DELETE,
+        ):
+            p.mirror_delete_scope = MirrorDeleteScope.SUBFOLDER
 
         if not p.rules:
             p.rules = default_rules()
@@ -164,7 +199,6 @@ class AppConfig:
 
 
 def default_rules() -> list[Rule]:
-    # Simple defaults that make sense for most users
     return [
         Rule(True, "Images", "images", extensions=["jpg", "jpeg", "png", "gif", "webp", "heic", "tiff"], mime_prefixes=["image/"]),
         Rule(True, "Videos", "videos", extensions=["mp4", "mov", "mkv", "avi", "webm"], mime_prefixes=["video/"]),

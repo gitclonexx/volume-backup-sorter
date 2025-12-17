@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
+
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QCheckBox,
-    QPushButton, QSpinBox, QFormLayout
+    QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QCheckBox,
+    QPushButton, QSpinBox, QFormLayout, QMessageBox
 )
 
 from ..models import Rule
+from ..i18n import I18N
 
 
 def _split_csv(s: str) -> list[str]:
@@ -18,8 +21,9 @@ def _split_csv(s: str) -> list[str]:
 
 
 class RuleEditorDialog(QDialog):
-    def __init__(self, title: str, rule: Rule | None = None, parent=None):
+    def __init__(self, i18n: I18N, title: str, rule: Rule | None = None, parent=None):
         super().__init__(parent)
+        self.i18n = i18n
         self.setWindowTitle(title)
         self.setModal(True)
 
@@ -61,19 +65,38 @@ class RuleEditorDialog(QDialog):
 
         btns = QHBoxLayout()
         btns.addStretch(1)
-        self.btn_ok = QPushButton("OK")
-        self.btn_cancel = QPushButton("Cancel")
-        self.btn_ok.clicked.connect(self.accept)
+        self.btn_ok = QPushButton(self.i18n.t("rule_editor.ok"))
+        self.btn_cancel = QPushButton(self.i18n.t("rule_editor.cancel"))
+        self.btn_ok.clicked.connect(self.on_ok)
         self.btn_cancel.clicked.connect(self.reject)
         btns.addWidget(self.btn_ok)
         btns.addWidget(self.btn_cancel)
         root.addLayout(btns)
 
+    def on_ok(self):
+        # Validate regex
+        pat = (self.ed_regex.text() or "").strip()
+        if pat:
+            try:
+                re.compile(pat)
+            except Exception:
+                QMessageBox.warning(self, "Info", self.i18n.t("rule_editor.invalid_regex"))
+                return
+
+        # Validate size range (max=0 means no max)
+        mn = int(self.sp_min.value())
+        mx = int(self.sp_max.value())
+        if mx != 0 and mn > mx:
+            QMessageBox.warning(self, "Info", self.i18n.t("rule_editor.invalid_size"))
+            return
+
+        self.accept()
+
     def get_rule(self) -> Rule:
         r = Rule()
         r.enabled = self.chk_enabled.isChecked()
         r.name = (self.ed_name.text() or "Rule").strip()
-        r.target_folder = (self.ed_folder.text() or "misc").strip()
+        r.target_folder = (self.ed_folder.text() or "misc").strip() or "misc"
 
         r.extensions = [x.lower().lstrip(".") for x in _split_csv(self.ed_ext.text())]
         r.mime_prefixes = [x.lower() for x in _split_csv(self.ed_mime.text())]

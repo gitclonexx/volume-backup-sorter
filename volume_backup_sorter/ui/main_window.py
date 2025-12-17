@@ -2,20 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QListWidget, QListWidgetItem, QTextEdit, QProgressBar,
-    QFileDialog, QMessageBox, QToolButton, QGroupBox
+    QFileDialog, QMessageBox, QToolButton, QGroupBox, QInputDialog
 )
 from PyQt6.QtGui import QDesktopServices
 
-from ..models import AppConfig, Profile
+from ..models import AppConfig, Profile, BackupMode, MirrorDeleteScope
 from ..config_store import save_config
 from ..i18n import I18N
 from .widgets import DropArea, DROP_QSS
 from .settings_dialog import SettingsDialog
+from .preview_dialog import PreviewDialog
 from ..worker import BackupWorker, RunResult
 
 
@@ -26,7 +27,6 @@ class MainWindow(QMainWindow):
         self.i18n = i18n
 
         self.worker: BackupWorker | None = None
-        self._target = ""
 
         self.setWindowTitle(self.i18n.t("app.title"))
         self.resize(980, 720)
@@ -35,7 +35,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
 
-        # Top: profile + settings
         top = QHBoxLayout()
         top.addWidget(QLabel(self.i18n.t("profiles.active")))
 
@@ -56,7 +55,6 @@ class MainWindow(QMainWindow):
 
         root.addLayout(top)
 
-        # Target group
         g_target = QGroupBox(self.i18n.t("ui.target"))
         lay_t = QHBoxLayout(g_target)
 
@@ -77,7 +75,6 @@ class MainWindow(QMainWindow):
 
         root.addWidget(g_target)
 
-        # Sources group
         g_src = QGroupBox(self.i18n.t("ui.sources"))
         lay_s = QVBoxLayout(g_src)
 
@@ -112,7 +109,6 @@ class MainWindow(QMainWindow):
 
         root.addWidget(g_src, 2)
 
-        # Progress + log
         g_prog = QGroupBox(self.i18n.t("ui.progress"))
         lay_p = QVBoxLayout(g_prog)
 
@@ -153,7 +149,6 @@ class MainWindow(QMainWindow):
 
         root.addLayout(bottom)
 
-        # menu
         act_quit = QAction("Quit", self)
         act_quit.triggered.connect(self.close)
         self.menuBar().addMenu("File").addAction(act_quit)
@@ -180,32 +175,23 @@ class MainWindow(QMainWindow):
             self.cfg.active_profile_id = str(pid)
             save_config(self.cfg)
 
-    # ---------- Target
-
     def choose_target(self):
         start = self.cmb_target.currentText().strip() or str(Path.home())
         d = QFileDialog.getExistingDirectory(self, self.i18n.t("ui.target"), start)
         if d:
-            self._set_target(d)
-
-    def _set_target(self, d: str):
-        p = str(Path(d).expanduser().resolve())
-        self._target = p
-        # keep at top
-        idx = self.cmb_target.findText(p)
-        if idx >= 0:
-            self.cmb_target.removeItem(idx)
-        self.cmb_target.insertItem(0, p)
-        self.cmb_target.setCurrentIndex(0)
-        self._append(f"Target set: {p}")
+            p = str(Path(d).expanduser().resolve())
+            idx = self.cmb_target.findText(p)
+            if idx >= 0:
+                self.cmb_target.removeItem(idx)
+            self.cmb_target.insertItem(0, p)
+            self.cmb_target.setCurrentIndex(0)
+            self._append(f"Target set: {p}")
 
     def open_target(self):
         t = self.cmb_target.currentText().strip()
         if not t:
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(t))
-
-    # ---------- Sources
 
     def _append(self, s: str):
         self.log.append(s)
@@ -239,8 +225,6 @@ class MainWindow(QMainWindow):
     def _sources(self) -> list[str]:
         return [self.list_sources.item(i).text() for i in range(self.list_sources.count())]
 
-    # ---------- Run
-
     def _validate(self) -> tuple[str, list[str]] | None:
         target = self.cmb_target.currentText().strip()
         if not target:
@@ -263,10 +247,34 @@ class MainWindow(QMainWindow):
         self._append(self.i18n.t("msg.preview_start"))
         self._start_worker(target, sources, dry_run=True)
 
+    def _danger_confirm_if_needed(self) -> bool:
+        prof = self.active_profile()
+        if prof.mode != BackupMode.MIRROR_TREE:
+            return True
+        if prof.mirror_delete_scope != MirrorDeleteScope.WHOLE_TARGET:
+            return True
+        if prof.mirror_delete_scope == MirrorDeleteScope.NO_DELETE:
+            return True
+
+        text, ok = QInputDialog.getText(
+            self,
+            self.i18n.t("mirror.confirm.title"),
+            self.i18n.t("mirror.confirm.text"),
+        )
+        if not ok:
+            return False
+        if (text or "").strip() != "DELETE":
+            QMessageBox.warning(self, "Info", self.i18n.t("mirror.confirm_wrong"))
+            return False
+        return True
+
     def start_run(self):
         v = self._validate()
         if not v:
             return
+        if not self._danger_confirm_if_needed():
+            return
+
         target, sources = v
         self._append(self.i18n.t("msg.run_start"))
         self._start_worker(target, sources, dry_run=False)
@@ -303,19 +311,24 @@ class MainWindow(QMainWindow):
         self.lbl_state.setText(f"{cur}/{total}")
 
     def on_finished(self, res: RunResult):
+        dry = bool(self.worker and self.worker.dry_run)
+
         self._set_running(False)
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
         self.lbl_state.setText(self.i18n.t("msg.done"))
 
-        prof = self.active_profile()
         save_config(self.cfg)
 
-        # Auto open
-        if prof.auto_open_target and not (self.worker and self.worker.dry_run):
-            t = self.cmb_target.currentText().strip()
-            if t:
-                QDesktopServices.openUrl(QUrl.fromLocalFile(t))
+        if dry:
+            dlg = PreviewDialog(self.i18n, res, self)
+            dlg.exec()
+        else:
+            prof = self.active_profile()
+            if prof.auto_open_target:
+                t = self.cmb_target.currentText().strip()
+                if t:
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(t))
 
         self._append(f"Copied: {res.copied}, dup skipped: {res.skipped_duplicates}, mirror deleted: {res.deleted_mirror}")
 
@@ -337,16 +350,11 @@ class MainWindow(QMainWindow):
         self.btn_remove.setEnabled(not running)
         self.btn_clear_sources.setEnabled(not running)
 
-    # ---------- Settings
-
     def open_settings(self):
         dlg = SettingsDialog(self.cfg, self.i18n, self)
         if dlg.exec() == dlg.DialogCode.Accepted:
-            # reload config and refresh i18n
-            self.cfg = self.cfg  # already updated by dialog
             self.i18n = I18N(self.cfg.language)
 
-            # refresh UI texts
             self.setWindowTitle(self.i18n.t("app.title"))
             self.btn_choose_target.setText(self.i18n.t("ui.choose"))
             self.btn_open_target.setText(self.i18n.t("ui.open"))

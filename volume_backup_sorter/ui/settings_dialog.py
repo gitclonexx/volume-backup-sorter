@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import re
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QLabel,
     QComboBox, QCheckBox, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
-    QMessageBox, QListWidget, QListWidgetItem, QFormLayout
+    QMessageBox, QListWidget, QListWidgetItem, QFormLayout, QLineEdit
 )
 
 from ..i18n import I18N, LANGUAGES
 from ..models import (
     AppConfig, Profile, Rule,
-    BackupMode, ConflictStrategy, SymlinkMode
+    BackupMode, ConflictStrategy, SymlinkMode,
+    MirrorDeleteScope
 )
 from ..config_store import save_config
 from .rule_editor import RuleEditorDialog
@@ -42,6 +45,23 @@ def _symlink_items(i18n: I18N):
     ]
 
 
+def _mirror_scope_items(i18n: I18N):
+    return [
+        (MirrorDeleteScope.SUBFOLDER, i18n.t("mirror.scope.subfolder")),
+        (MirrorDeleteScope.WHOLE_TARGET, i18n.t("mirror.scope.whole")),
+        (MirrorDeleteScope.NO_DELETE, i18n.t("mirror.scope.none")),
+    ]
+
+
+def _split_csv(s: str) -> list[str]:
+    out = []
+    for x in (s or "").split(","):
+        x = x.strip()
+        if x:
+            out.append(x)
+    return out
+
+
 class SettingsDialog(QDialog):
     def __init__(self, cfg: AppConfig, i18n: I18N, parent=None):
         super().__init__(parent)
@@ -50,7 +70,7 @@ class SettingsDialog(QDialog):
 
         self.setWindowTitle(self.i18n.t("settings.title"))
         self.setModal(True)
-        self.resize(860, 520)
+        self.resize(900, 560)
 
         root = QVBoxLayout(self)
 
@@ -107,10 +127,19 @@ class SettingsDialog(QDialog):
         self.chk_meta = QCheckBox(self.i18n.t("settings.metadata"))
         self.chk_open = QCheckBox(self.i18n.t("settings.auto_open"))
 
+        self.cmb_mirror_scope = QComboBox()
+        self.ed_mirror_subdir = QLineEdit()
+        self.ed_mirror_whitelist = QLineEdit()
+
         form.addRow(QLabel(self.i18n.t("settings.language")), self.cmb_lang)
         form.addRow(QLabel(self.i18n.t("settings.mode")), self.cmb_mode)
         form.addRow(QLabel(self.i18n.t("settings.conflict")), self.cmb_conflict)
         form.addRow(QLabel(self.i18n.t("settings.symlink")), self.cmb_symlinks)
+
+        form.addRow(QLabel(self.i18n.t("settings.mirror_scope")), self.cmb_mirror_scope)
+        form.addRow(QLabel(self.i18n.t("settings.mirror_subdir")), self.ed_mirror_subdir)
+        form.addRow(QLabel(self.i18n.t("settings.mirror_whitelist")), self.ed_mirror_whitelist)
+
         form.addRow(self.chk_meta)
         form.addRow(self.chk_open)
 
@@ -157,6 +186,15 @@ class SettingsDialog(QDialog):
         btns.addWidget(self.btn_down_rule)
         lay.addLayout(btns)
 
+    def _is_valid_regex(self, pat: str) -> bool:
+        if not pat:
+            return True
+        try:
+            re.compile(pat)
+            return True
+        except Exception:
+            return False
+
     def _rule_match_text(self, r: Rule) -> str:
         parts = []
         if r.extensions:
@@ -164,7 +202,8 @@ class SettingsDialog(QDialog):
         if r.mime_prefixes:
             parts.append("mime=" + ",".join(r.mime_prefixes[:4]) + ("…" if len(r.mime_prefixes) > 4 else ""))
         if r.name_regex:
-            parts.append("re=" + r.name_regex)
+            ok = self._is_valid_regex(r.name_regex)
+            parts.append(("re=" + r.name_regex) if ok else ("re=INVALID(" + r.name_regex + ")"))
         if r.path_contains:
             parts.append("path~" + r.path_contains)
         if r.size_min_mb:
@@ -196,7 +235,7 @@ class SettingsDialog(QDialog):
         return next(iter(rows), -1)
 
     def on_add_rule(self):
-        dlg = RuleEditorDialog(self.i18n.t("rule_editor.title_add"), None, self)
+        dlg = RuleEditorDialog(self.i18n, self.i18n.t("rule_editor.title_add"), None, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.active_profile().rules.append(dlg.get_rule())
             self._reload_rules_table()
@@ -206,7 +245,7 @@ class SettingsDialog(QDialog):
         if idx < 0:
             return
         prof = self.active_profile()
-        dlg = RuleEditorDialog(self.i18n.t("rule_editor.title_edit"), prof.rules[idx], self)
+        dlg = RuleEditorDialog(self.i18n, self.i18n.t("rule_editor.title_edit"), prof.rules[idx], self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             prof.rules[idx] = dlg.get_rule()
             self._reload_rules_table()
@@ -306,7 +345,6 @@ class SettingsDialog(QDialog):
                 it.setText(it.text() + "  *")
             self.list_profiles.addItem(it)
 
-        # set combobox selection
         idx = self.cmb_active.findData(self.cfg.active_profile_id)
         if idx >= 0:
             self.cmb_active.setCurrentIndex(idx)
@@ -337,7 +375,7 @@ class SettingsDialog(QDialog):
         if not src:
             return
         data = src.to_dict()
-        data["id"] = ""  # new id
+        data["id"] = ""
         data["name"] = src.name + " Copy"
         p = Profile.from_dict(data)
         self.cfg.profiles.append(p)
@@ -350,7 +388,6 @@ class SettingsDialog(QDialog):
         p = next((x for x in self.cfg.profiles if x.id == pid), None)
         if not p:
             return
-        # simple rename dialog via QMessageBox + input is missing; use edit in combobox name
         new_name = self.cmb_active.currentText().strip()
         if new_name:
             p.name = new_name
@@ -372,12 +409,10 @@ class SettingsDialog(QDialog):
     # ---------- Load/Save
 
     def _load_from_cfg(self):
-        # language
         idx = self.cmb_lang.findData(self.cfg.language)
         if idx >= 0:
             self.cmb_lang.setCurrentIndex(idx)
 
-        # general dropdown items (need current language)
         self.cmb_mode.clear()
         for k, label in _mode_items(self.i18n):
             self.cmb_mode.addItem(label, k)
@@ -390,11 +425,19 @@ class SettingsDialog(QDialog):
         for k, label in _symlink_items(self.i18n):
             self.cmb_symlinks.addItem(label, k)
 
+        self.cmb_mirror_scope.clear()
+        for k, label in _mirror_scope_items(self.i18n):
+            self.cmb_mirror_scope.addItem(label, k)
+
         prof = self.active_profile()
 
         self.cmb_mode.setCurrentIndex(max(0, self.cmb_mode.findData(prof.mode)))
         self.cmb_conflict.setCurrentIndex(max(0, self.cmb_conflict.findData(prof.conflict)))
         self.cmb_symlinks.setCurrentIndex(max(0, self.cmb_symlinks.findData(prof.symlinks)))
+
+        self.cmb_mirror_scope.setCurrentIndex(max(0, self.cmb_mirror_scope.findData(prof.mirror_delete_scope)))
+        self.ed_mirror_subdir.setText(prof.mirror_scope_subdir or "mirror")
+        self.ed_mirror_whitelist.setText(", ".join(prof.mirror_delete_ext_whitelist or []))
 
         self.chk_meta.setChecked(bool(prof.preserve_metadata))
         self.chk_open.setChecked(bool(prof.auto_open_target))
@@ -407,7 +450,6 @@ class SettingsDialog(QDialog):
         self._reload_rules_table()
 
     def on_save(self):
-        # apply language
         self.cfg.language = str(self.cmb_lang.currentData() or "en")
 
         prof = self.active_profile()
@@ -416,6 +458,17 @@ class SettingsDialog(QDialog):
         prof.symlinks = str(self.cmb_symlinks.currentData() or prof.symlinks)
         prof.preserve_metadata = bool(self.chk_meta.isChecked())
         prof.auto_open_target = bool(self.chk_open.isChecked())
+
+        prof.mirror_delete_scope = str(self.cmb_mirror_scope.currentData() or prof.mirror_delete_scope)
+        sub = (self.ed_mirror_subdir.text() or "mirror").strip() or "mirror"
+        prof.mirror_scope_subdir = sub
+
+        wl = [x.lower().lstrip(".") for x in _split_csv(self.ed_mirror_whitelist.text())]
+        prof.mirror_delete_ext_whitelist = wl
+
+        if prof.mirror_delete_scope == MirrorDeleteScope.SUBFOLDER and not prof.mirror_scope_subdir:
+            QMessageBox.warning(self, "Info", "Mirror subfolder cannot be empty.")
+            return
 
         prof.perf.hash_threads = int(self.sp_hash.value())
         prof.perf.copy_threads = int(self.sp_copy.value())

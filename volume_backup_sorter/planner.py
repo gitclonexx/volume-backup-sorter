@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable
 import re
 
-from .models import Profile, Rule, BackupMode, SymlinkMode
+from .models import Profile, Rule
 from .fsops import guess_mime, sanitize_folder_name, compile_regex
 
 
@@ -40,11 +40,9 @@ def iter_files(paths: list[str], follow_symlinks: bool) -> Iterable[Path]:
             continue
 
         if p.is_dir():
-            # Use os.walk for cross-platform behavior
             for root, _, files in os.walk(p):
                 for name in files:
                     fp = Path(root) / name
-                    # Skip broken symlinks when not following
                     if fp.is_symlink() and not follow_symlinks:
                         continue
                     yield fp
@@ -54,26 +52,18 @@ def rule_matches(rule: Rule, src: Path, mime: str, size: int, regex_cache: dict[
     if not rule.enabled:
         return False
 
-    # Extensions
     if rule.extensions:
         ext = src.suffix.lower().lstrip(".")
         if ext not in set(rule.extensions):
             return False
 
-    # MIME
     if rule.mime_prefixes:
         if not mime:
             return False
-        ok = False
         ml = mime.lower()
-        for pref in rule.mime_prefixes:
-            if ml.startswith(pref):
-                ok = True
-                break
-        if not ok:
+        if not any(ml.startswith(pref) for pref in rule.mime_prefixes):
             return False
 
-    # Name regex
     if rule.name_regex:
         pat = rule.name_regex
         rx = regex_cache.get(pat)
@@ -85,12 +75,10 @@ def rule_matches(rule: Rule, src: Path, mime: str, size: int, regex_cache: dict[
         if not rx.search(src.name):
             return False
 
-    # Path contains
     if rule.path_contains:
         if rule.path_contains.lower() not in str(src).lower():
             return False
 
-    # Size range
     if rule.size_min_mb and size < rule.size_min_mb * 1024 * 1024:
         return False
     if rule.size_max_mb and size > rule.size_max_mb * 1024 * 1024:
@@ -111,10 +99,9 @@ def dest_for_rules(profile: Profile, target_root: Path, src: Path, size: int) ->
     return target_root / "misc" / src.name
 
 
-def dest_for_mirror(target_root: Path, source_root: Path, src: Path) -> Path:
-    # Mirror keeps relative path from each source root
+def dest_for_mirror(base_root: Path, source_root: Path, src: Path) -> Path:
     rel = src.resolve().relative_to(source_root.resolve())
-    return target_root / rel
+    return base_root / rel
 
 
 def infer_source_roots(source_paths: list[str]) -> list[Path]:
