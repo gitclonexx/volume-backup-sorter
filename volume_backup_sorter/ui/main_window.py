@@ -149,9 +149,11 @@ class MainWindow(QMainWindow):
 
         root.addLayout(bottom)
 
-        act_quit = QAction("Quit", self)
+        # Menu (translated)
+        menu_file = self.menuBar().addMenu(self.i18n.t("menu.file"))
+        act_quit = QAction(self.i18n.t("menu.quit"), self)
         act_quit.triggered.connect(self.close)
-        self.menuBar().addMenu("File").addAction(act_quit)
+        menu_file.addAction(act_quit)
 
     def active_profile(self) -> Profile:
         pid = self.cfg.active_profile_id
@@ -228,14 +230,14 @@ class MainWindow(QMainWindow):
     def _validate(self) -> tuple[str, list[str]] | None:
         target = self.cmb_target.currentText().strip()
         if not target:
-            QMessageBox.warning(self, "Info", self.i18n.t("msg.missing_target"))
+            QMessageBox.warning(self, self.i18n.t("ui.info_title"), self.i18n.t("msg.missing_target"))
             return None
         sources = self._sources()
         if not sources:
-            QMessageBox.warning(self, "Info", self.i18n.t("msg.missing_sources"))
+            QMessageBox.warning(self, self.i18n.t("ui.info_title"), self.i18n.t("msg.missing_sources"))
             return None
         if self.worker and self.worker.isRunning():
-            QMessageBox.information(self, "Info", self.i18n.t("msg.running"))
+            QMessageBox.information(self, self.i18n.t("ui.info_title"), self.i18n.t("msg.running"))
             return None
         return target, sources
 
@@ -264,7 +266,7 @@ class MainWindow(QMainWindow):
         if not ok:
             return False
         if (text or "").strip() != "DELETE":
-            QMessageBox.warning(self, "Info", self.i18n.t("mirror.confirm_wrong"))
+            QMessageBox.warning(self, self.i18n.t("ui.info_title"), self.i18n.t("mirror.confirm_wrong"))
             return False
         return True
 
@@ -350,25 +352,38 @@ class MainWindow(QMainWindow):
         self.btn_remove.setEnabled(not running)
         self.btn_clear_sources.setEnabled(not running)
 
+    def _spawn_new_window_after_language_change(self):
+        new_i18n = I18N(self.cfg.language)
+        new_win = MainWindow(self.cfg, new_i18n)
+
+        # Copy state
+        new_win.setGeometry(self.geometry())
+
+        # Target combo items + current text
+        for i in range(self.cmb_target.count()):
+            new_win.cmb_target.addItem(self.cmb_target.itemText(i))
+        new_win.cmb_target.setCurrentText(self.cmb_target.currentText())
+
+        # Sources list
+        for i in range(self.list_sources.count()):
+            new_win.list_sources.addItem(self.list_sources.item(i).text())
+
+        # Log
+        new_win.log.setPlainText(self.log.toPlainText())
+
+        new_win.show()
+        self.close()
+
     def open_settings(self):
+        old_lang = self.cfg.language
         dlg = SettingsDialog(self.cfg, self.i18n, self)
         if dlg.exec() == dlg.DialogCode.Accepted:
-            self.i18n = I18N(self.cfg.language)
+            # If language changed, rebuild whole window (100% coverage)
+            if self.cfg.language != old_lang:
+                self._spawn_new_window_after_language_change()
+                return
 
-            self.setWindowTitle(self.i18n.t("app.title"))
-            self.btn_choose_target.setText(self.i18n.t("ui.choose"))
-            self.btn_open_target.setText(self.i18n.t("ui.open"))
-            self.btn_add_files.setText(self.i18n.t("ui.add_files"))
-            self.btn_add_folder.setText(self.i18n.t("ui.add_folder"))
-            self.btn_remove.setText(self.i18n.t("ui.remove_selected"))
-            self.btn_clear_sources.setText(self.i18n.t("ui.clear_all"))
-            self.btn_start.setText(self.i18n.t("ui.start"))
-            self.btn_preview.setText(self.i18n.t("ui.preview"))
-            self.btn_cancel.setText(self.i18n.t("ui.cancel"))
-            self.btn_clear_log.setText(self.i18n.t("ui.clear_log"))
-            self.btn_settings.setToolTip(self.i18n.t("ui.settings"))
-            self.drop.set_texts(self.i18n.t("ui.drop.title"), self.i18n.t("ui.drop.hint"))
-
+            # No language change: just reload profile combo because settings can change profiles
             self._reload_profiles_combo()
 
     def closeEvent(self, event):

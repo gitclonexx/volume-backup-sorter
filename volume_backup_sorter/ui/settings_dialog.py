@@ -110,8 +110,6 @@ class SettingsDialog(QDialog):
                 return p
         return self.cfg.profiles[0]
 
-    # ---------- General
-
     def _build_general(self):
         lay = QVBoxLayout(self.tab_general)
         form = QFormLayout()
@@ -145,8 +143,6 @@ class SettingsDialog(QDialog):
 
         lay.addLayout(form)
         lay.addStretch(1)
-
-    # ---------- Rules
 
     def _build_rules(self):
         lay = QVBoxLayout(self.tab_rules)
@@ -276,8 +272,6 @@ class SettingsDialog(QDialog):
         self._reload_rules_table()
         self.tbl_rules.selectRow(idx + 1)
 
-    # ---------- Performance
-
     def _build_perf(self):
         lay = QVBoxLayout(self.tab_perf)
         form = QFormLayout()
@@ -297,8 +291,6 @@ class SettingsDialog(QDialog):
 
         lay.addLayout(form)
         lay.addStretch(1)
-
-    # ---------- Profiles
 
     def _build_profiles(self):
         lay = QVBoxLayout(self.tab_profiles)
@@ -363,7 +355,7 @@ class SettingsDialog(QDialog):
         return str(it.data(Qt.ItemDataRole.UserRole) or "")
 
     def on_add_profile(self):
-        p = Profile(name="New Profile")
+        p = Profile(name=self.i18n.t("profiles.new_profile"))
         self.cfg.profiles.append(p)
         self.cfg.active_profile_id = p.id
         self._reload_profiles_ui()
@@ -376,7 +368,7 @@ class SettingsDialog(QDialog):
             return
         data = src.to_dict()
         data["id"] = ""
-        data["name"] = src.name + " Copy"
+        data["name"] = src.name + self.i18n.t("profiles.copy_suffix")
         p = Profile.from_dict(data)
         self.cfg.profiles.append(p)
         self.cfg.active_profile_id = p.id
@@ -398,15 +390,13 @@ class SettingsDialog(QDialog):
         if not pid:
             return
         if len(self.cfg.profiles) <= 1:
-            QMessageBox.warning(self, "Info", "Cannot delete the last profile.")
+            QMessageBox.warning(self, self.i18n.t("ui.info_title"), self.i18n.t("msg.cannot_delete_last_profile"))
             return
         self.cfg.profiles = [p for p in self.cfg.profiles if p.id != pid]
         if self.cfg.active_profile_id == pid:
             self.cfg.active_profile_id = self.cfg.profiles[0].id
         self._reload_profiles_ui()
         self._reload_rules_table()
-
-    # ---------- Load/Save
 
     def _load_from_cfg(self):
         idx = self.cmb_lang.findData(self.cfg.language)
@@ -467,7 +457,7 @@ class SettingsDialog(QDialog):
         prof.mirror_delete_ext_whitelist = wl
 
         if prof.mirror_delete_scope == MirrorDeleteScope.SUBFOLDER and not prof.mirror_scope_subdir:
-            QMessageBox.warning(self, "Info", "Mirror subfolder cannot be empty.")
+            QMessageBox.warning(self, self.i18n.t("ui.info_title"), self.i18n.t("msg.mirror_subdir_empty"))
             return
 
         prof.perf.hash_threads = int(self.sp_hash.value())

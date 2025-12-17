@@ -22,6 +22,13 @@ class I18N:
 _STRINGS = {
     "en": {
         "app.title": "Volume Backup Sorter",
+
+        "ui.info_title": "Info",
+        "ui.error_title": "Error",
+
+        "menu.file": "File",
+        "menu.quit": "Quit",
+
         "ui.target": "Target",
         "ui.target_folder": "Target folder:",
         "ui.choose": "Choose…",
@@ -49,6 +56,9 @@ _STRINGS = {
         "msg.run_start": "Run start…",
         "msg.cancel_requested": "Cancel requested…",
         "msg.done": "Done.",
+
+        "msg.cannot_delete_last_profile": "Cannot delete the last profile.",
+        "msg.mirror_subdir_empty": "Mirror subfolder cannot be empty.",
 
         "settings.title": "Settings",
         "settings.general": "General",
@@ -83,6 +93,8 @@ _STRINGS = {
         "profiles.rename": "Rename",
         "profiles.delete": "Delete",
         "profiles.set_active": "Set active",
+        "profiles.new_profile": "New Profile",
+        "profiles.copy_suffix": " Copy",
 
         "rules.add": "Add",
         "rules.edit": "Edit",
@@ -130,6 +142,13 @@ _STRINGS = {
     },
     "de": {
         "app.title": "Volume Backup Sorter",
+
+        "ui.info_title": "Info",
+        "ui.error_title": "Fehler",
+
+        "menu.file": "Datei",
+        "menu.quit": "Beenden",
+
         "ui.target": "Ziel",
         "ui.target_folder": "Zielordner:",
         "ui.choose": "Wählen…",
@@ -157,6 +176,9 @@ _STRINGS = {
         "msg.run_start": "Vorgang startet…",
         "msg.cancel_requested": "Abbruch angefordert…",
         "msg.done": "Fertig.",
+
+        "msg.cannot_delete_last_profile": "Das letzte Profil kann nicht gelöscht werden.",
+        "msg.mirror_subdir_empty": "Mirror-Unterordner darf nicht leer sein.",
 
         "settings.title": "Einstellungen",
         "settings.general": "Allgemein",
@@ -191,6 +213,8 @@ _STRINGS = {
         "profiles.rename": "Umbenennen",
         "profiles.delete": "Löschen",
         "profiles.set_active": "Aktiv setzen",
+        "profiles.new_profile": "Neues Profil",
+        "profiles.copy_suffix": " Kopie",
 
         "rules.add": "Neu",
         "rules.edit": "Bearbeiten",
@@ -238,6 +262,13 @@ _STRINGS = {
     },
     "es": {
         "app.title": "Volume Backup Sorter",
+
+        "ui.info_title": "Info",
+        "ui.error_title": "Error",
+
+        "menu.file": "Archivo",
+        "menu.quit": "Salir",
+
         "ui.target": "Destino",
         "ui.target_folder": "Carpeta destino:",
         "ui.choose": "Elegir…",
@@ -265,6 +296,9 @@ _STRINGS = {
         "msg.run_start": "Iniciando…",
         "msg.cancel_requested": "Cancelación solicitada…",
         "msg.done": "Hecho.",
+
+        "msg.cannot_delete_last_profile": "No se puede eliminar el último perfil.",
+        "msg.mirror_subdir_empty": "La subcarpeta mirror no puede estar vacía.",
 
         "settings.title": "Ajustes",
         "settings.general": "General",
@@ -299,6 +333,8 @@ _STRINGS = {
         "profiles.rename": "Renombrar",
         "profiles.delete": "Eliminar",
         "profiles.set_active": "Activar",
+        "profiles.new_profile": "Nuevo perfil",
+        "profiles.copy_suffix": " Copia",
 
         "rules.add": "Añadir",
         "rules.edit": "Editar",
