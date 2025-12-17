@@ -19,3 +19,5 @@ Bereits bekannte Dateien werden übersprungen (Duplikate werden nicht erneut kop
 - ✅ Lokale Config/History unter `~/.nas_backup_sorter/config.json`
 
 Das Tool ist gedacht, um Fotos, Downloads oder alte Datenträger schnell in ein NAS / Backup-Verzeichnis zu schaufeln, ohne 100x dieselben Dateien zu kopieren.
+
+END
