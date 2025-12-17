@@ -1,16 +1,52 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "volume-backup-sorter"
 version = "0.3.0"
 description = "Cross-platform backup sorter with rules, profiles, and deduplication"
+readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["PyQt6>=6.6"]
+license = { file = "LICENSE" }
+authors = [
+  { name = "Jan-Luca Waltensdorfer" }
+]
+dependencies = [
+  "PyQt6>=6.6"
+]
+keywords = ["backup", "deduplication", "pyqt", "gui", "files", "nas"]
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: X11 Applications :: Qt",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: System :: Archiving :: Backup",
+  "Topic :: Desktop Environment",
+  "Topic :: Utilities"
+]
+
+[project.urls]
+Homepage = "https://github.com/gitclonexx/volume-backup-sorter"
+Repository = "https://github.com/gitclonexx/volume-backup-sorter"
+Issues = "https://github.com/gitclonexx/volume-backup-sorter/issues"
 
 [project.scripts]
 volume-backup-sorter = "volume_backup_sorter.cli:main"
 
 [tool.setuptools]
-packages = ["volume_backup_sorter", "volume_backup_sorter.ui"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["volume_backup_sorter*"]
+
