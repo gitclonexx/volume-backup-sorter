@@ -68,6 +68,7 @@ Build artifacts (dist/, build/) are intentionally not committed to the repositor
 
 ## Linux (onefile,GUI)
 
+```bash
 python3 -m venv venv
 source venv/bin/activate
 
@@ -92,6 +93,7 @@ dist/volume-backup-sorter
 
 ## macOS (onefile,GUI)
 
+```bash
 python3 -m venv venv
 source venv/bin/activate
 
@@ -116,6 +118,7 @@ xattr -dr com.apple.quarantine dist/volume-backup-sorter
 
 ## Windows (onefile,GUI)
 
+```bash
 py -m venv venv
 .\venv\Scripts\activate
 
@@ -141,6 +144,7 @@ dist\volume-backup-sorter.exe
 
 ## Project structure
 
+```bash
 volume_backup_sorter/
     - app.py
     - cli.py
