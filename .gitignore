@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
+
+# SQLite (falls du die DB nicht versionieren willst)
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
