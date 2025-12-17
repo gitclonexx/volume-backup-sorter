@@ -1,14 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
-
-from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files
+from pathlib import Path
+from PyInstaller.building.datastruct import TOC
 
 block_cipher = None
 
-pyqt6_datas = collect_data_files("PyQt6", include_py_files=False)
-pyqt6_bins  = collect_dynamic_libs("PyQt6")
+APP_NAME = "volume-backup-sorter"
+ENTRY = "volume_backup_sorter/__main__.py"
 
-excludes = [
-    
+KEEP_QT_LANGS = ("de", "en", "es")
+
+EXCLUDES = [
     "PyQt6.QtQml",
     "PyQt6.QtQuick",
     "PyQt6.QtQuickWidgets",
@@ -16,29 +17,44 @@ excludes = [
     "PyQt6.QtWebEngineWidgets",
     "PyQt6.QtWebEngineQuick",
     "PyQt6.QtWebChannel",
-
-   
-    "PyQt6.QtBluetooth",
-    "PyQt6.QtNfc",
-    "PyQt6.QtPositioning",
-    "PyQt6.QtSensors",
-    "PyQt6.QtSerialPort",
-    "PyQt6.QtSql",
-    "PyQt6.QtTest",
-    "PyQt6.QtRemoteObjects",
 ]
 
+def _norm(p: str) -> str:
+    return p.replace("\\", "/")
+
+def drop_by_dest_prefix(toc, prefix: str):
+    prefix = _norm(prefix)
+    out = [(d, s, t) for (d, s, t) in toc if not _norm(d).startswith(prefix)]
+    return TOC(out)
+
+def keep_qt_translations_only(toc, keep_langs):
+    prefix = "PyQt6/Qt6/translations/"
+    out = []
+    for (dest, src, typ) in toc:
+        d = _norm(dest)
+        if d.startswith(prefix) and str(src).lower().endswith(".qm"):
+            base = Path(src).name.lower()
+            if any(f"_{lang}" in base for lang in keep_langs):
+                out.append((dest, src, typ))
+            continue
+        out.append((dest, src, typ))
+    return TOC(out)
+
 a = Analysis(
-    ["volume_backup_sorter/__main__.py"],
+    [ENTRY],
     pathex=["."],
-    binaries=pyqt6_bins,
-    datas=pyqt6_datas,
+    binaries=[],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[],
-    excludes=excludes,
-    noarchive=True,   # schnellere Starts (mehr Files, aber flotter)
+    excludes=EXCLUDES,
+    noarchive=True,   # onedir inside app bundle
 )
+
+a.datas = drop_by_dest_prefix(a.datas, "PyQt6/Qt6/qml/")
+a.binaries = drop_by_dest_prefix(a.binaries, "PyQt6/Qt6/qml/")
+a.datas = keep_qt_translations_only(a.datas, KEEP_QT_LANGS)
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
@@ -47,36 +63,27 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="volume-backup-sorter",
+    name=APP_NAME,
     debug=False,
-    strip=True,
-    upx=False,        
     console=False,
+    strip=True,
+    upx=False,
 )
 
 coll = COLLECT(
     exe,
     a.binaries,
+    a.zipfiles,
     a.datas,
     strip=True,
     upx=False,
-    name="volume-backup-sorter"
+    name=APP_NAME,
 )
 
 app = BUNDLE(
     coll,
-    name="Volume Backup Sorter.app",
-    bundle_identifier="com.janluca.volume-backup-sorter",
-    info_plist={
-        "CFBundleName": "Volume Backup Sorter",
-        "CFBundleDisplayName": "Volume Backup Sorter",
-        "CFBundleShortVersionString": "0.3.0",
-        "CFBundleVersion": "0.3.0",
-        "NSHighResolutionCapable": True,
-        # Optional
-        # "NSDocumentsFolderUsageDescription": "Zugriff auf Dokumente für Backups.",
-        # "NSDownloadsFolderUsageDescription": "Zugriff auf Downloads für Backups.",
-    },
-    # icon="assets/app.icns",  # 
+    name=f"{APP_NAME}.app",
+    icon=None,  # set to "assets/icon.icns"
+    bundle_identifier="com.example.volume-backup-sorter",
 )
 

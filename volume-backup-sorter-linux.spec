@@ -11,6 +11,7 @@ ENTRY = "volume_backup_sorter/__main__.py"
 KEEP_QT_LANGS = ("de", "en", "es")
 
 EXCLUDES = [
+    # Drop QML/Quick/WebEngine
     "PyQt6.QtQml",
     "PyQt6.QtQuick",
     "PyQt6.QtQuickWidgets",
@@ -18,6 +19,15 @@ EXCLUDES = [
     "PyQt6.QtWebEngineWidgets",
     "PyQt6.QtWebEngineQuick",
     "PyQt6.QtWebChannel",
+
+    # Usually not needed
+    "PyQt6.QtBluetooth",
+    "PyQt6.QtNfc",
+    "PyQt6.QtPositioning",
+    "PyQt6.QtSensors",
+    "PyQt6.QtSerialPort",
+    "PyQt6.QtTest",
+    "PyQt6.QtRemoteObjects",
 ]
 
 def _norm(p: str) -> str:
@@ -41,9 +51,6 @@ def keep_qt_translations_only(toc, keep_langs):
         out.append((dest, src, typ))
     return TOC(out)
 
-# Set to True ONLY if you accept AV false positives and you have UPX installed.
-USE_UPX = True
-
 a = Analysis(
     [ENTRY],
     pathex=["."],
@@ -53,11 +60,14 @@ a = Analysis(
     hookspath=[],
     runtime_hooks=[],
     excludes=EXCLUDES,
-    noarchive=True,
+    noarchive=True,   # onedir: faster startup
 )
 
+# QML
 a.datas = drop_by_dest_prefix(a.datas, "PyQt6/Qt6/qml/")
 a.binaries = drop_by_dest_prefix(a.binaries, "PyQt6/Qt6/qml/")
+
+# langs
 a.datas = keep_qt_translations_only(a.datas, KEEP_QT_LANGS)
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
@@ -69,9 +79,9 @@ exe = EXE(
     exclude_binaries=True,
     name=APP_NAME,
     debug=False,
-    console=False,     # GUI app (no console window)
-    strip=False,
-    upx=USE_UPX,
+    console=False,
+    strip=True,
+    upx=False,
 )
 
 coll = COLLECT(
@@ -79,8 +89,8 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    strip=False,
-    upx=USE_UPX,
+    strip=True,
+    upx=False,
     name=APP_NAME,
 )
 

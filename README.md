@@ -77,7 +77,7 @@ pyinstaller \
   volume_backup_sorter/__main__.py
 
 # optimised (recommended) (UPX required)
-pyinstaller --noconfirm --clean volume-backup-sorter.spec
+pyinstaller --clean volume-backup-sorter-linux.spec
 
 ```
 
@@ -99,7 +99,7 @@ pyinstaller \
   volume_backup_sorter/__main__.py
 
 # optimised (testing in progress)
-pyinstaller --noconfirm --clean volume-backup-sorter-macos.spec
+pyinstaller --clean volume-backup-sorter-macos.spec
 
 ```
 
@@ -125,7 +125,7 @@ pyinstaller `
   volume_backup_sorter\__main__.py
 
 # optimised (testing in progress) (UPX required)
-pyinstaller --noconfirm --clean volume-backup-sorter-windows.spec
+pyinstaller --clean volume-backup-sorter-windows.spec
 
 ```
 
