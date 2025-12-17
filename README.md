@@ -64,43 +64,33 @@ Standalone binaries are built using PyInstaller.
 Each platform must be built on its own operating system.
 
 Build artifacts (dist/, build/) are intentionally not committed to the repository.
-Linux (onefile, GUI)
+Linux (GUI)
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
 
-pip install -U pip
-pip install -e .
-pip install pyinstaller
-
-rm -rf build dist *.spec
-
+# onefile
 pyinstaller \
   --onefile \
   --windowed \
   --name volume-backup-sorter \
   --collect-all PyQt6 \
   volume_backup_sorter/__main__.py
+
+# optimised (recommended) (UPX required)
+pyinstaller --noconfirm --clean volume-backup-sorter.spec
+
 ```
 
 ### Result:
-dist/volume-backup-sorter
+dist/volume-backup-sorter/volume-backup-sorter
 
 ---
 
-## macOS (onefile, GUI)
+## macOS (GUI)
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
 
-pip install -U pip
-pip install -e .
-pip install pyinstaller
-
-rm -rf build dist *.spec
-
+# onefile
 pyinstaller \
   --onefile \
   --windowed \
@@ -108,9 +98,12 @@ pyinstaller \
   --collect-all PyQt6 \
   volume_backup_sorter/__main__.py
 
+# optimised (testing in progress)
+pyinstaller --noconfirm --clean volume-backup-sorter-macos.spec
+
 ```
 
-### First run (Gatekeeper):
+### First run (Gatekeeper) (quarantine):
 
 ```bash
 xattr -dr com.apple.quarantine dist/volume-backup-sorter
@@ -119,29 +112,25 @@ xattr -dr com.apple.quarantine dist/volume-backup-sorter
 
 ---
 
-## Windows (onefile, GUI)
+## Windows (GUI)
 
 ```bash
-py -m venv venv
-.\venv\Scripts\activate
 
-python -m pip install -U pip
-pip install -e .
-pip install pyinstaller
-
-rmdir /s /q build,dist 2>$null
-del *.spec 2>$null
-
+#onefile
 pyinstaller `
   --onefile `
   --noconsole `
   --name volume-backup-sorter `
   --collect-all PyQt6 `
   volume_backup_sorter\__main__.py
+
+# optimised (testing in progress)
+pyinstaller --noconfirm --clean volume-backup-sorter-windows.spec
+
 ```
 
 ### Result:
-dist\volume-backup-sorter.exe
+dist\volume-backup-sorter\volume-backup-sorter.exe
 
 ---
 
