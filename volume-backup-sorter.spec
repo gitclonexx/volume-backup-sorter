@@ -1,45 +1,67 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
 
-datas = []
-binaries = []
-hiddenimports = []
-tmp_ret = collect_all('PyQt6')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files
 
+block_cipher = None
+
+# PyQt6: only needed
+pyqt6_datas = collect_data_files("PyQt6", include_py_files=False)
+pyqt6_bins  = collect_dynamic_libs("PyQt6")
+
+excludes = [
+    # not used
+    "PyQt6.QtQml",
+    "PyQt6.QtQuick",
+    "PyQt6.QtQuickWidgets",
+    "PyQt6.QtWebEngineCore",
+    "PyQt6.QtWebEngineWidgets",
+    "PyQt6.QtWebEngineQuick",
+    "PyQt6.QtWebChannel",
+
+    # not useful
+    "PyQt6.QtBluetooth",
+    "PyQt6.QtNfc",
+    "PyQt6.QtPositioning",
+    "PyQt6.QtSensors",
+    "PyQt6.QtSerialPort",
+    "PyQt6.QtSql",
+    "PyQt6.QtTest",
+    "PyQt6.QtRemoteObjects",
+]
 
 a = Analysis(
-    ['volume_backup_sorter/__main__.py'],
-    pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    ["volume_backup_sorter/__main__.py"],
+    pathex=["."],
+    binaries=pyqt6_bins,
+    datas=pyqt6_datas,
+    hiddenimports=[],
     hookspath=[],
-    hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
-    noarchive=False,
-    optimize=0,
+    excludes=excludes,
+    noarchive=True,  # onedir + schnellerer Import-Startup (mehr Files, aber flotter)
 )
-pyz = PYZ(a.pure)
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
-    name='volume-backup-sorter',
+    exclude_binaries=True,
+    name="volume-backup-sorter",
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
+    strip=True,
+    upx=True,     # falls UPX installiert ist; sonst auf False setzen
+    console=False # windowed
 )
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=True,
+    upx=True,     # falls UPX installiert ist; sonst auf False setzen
+    name="volume-backup-sorter"
+)
+
