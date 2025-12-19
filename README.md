@@ -86,7 +86,7 @@ dist/volume-backup-sorter/volume-backup-sorter
 
 ---
 
-## macOS (GUI)
+## macOS (not ready)
 
 ```bash
 
@@ -112,7 +112,7 @@ xattr -dr com.apple.quarantine dist/volume-backup-sorter
 
 ---
 
-## Windows (GUI)
+## Windows (not ready)
 
 ```bash
 
