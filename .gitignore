@@ -31,3 +31,8 @@ builtinformation.txt
 secrets.*
 *.key
 *.pem
+
+# not finished
+
+volume-backup-sorter-macos.spec
+volume-backup-sorter-windows.spec
