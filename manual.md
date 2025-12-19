@@ -232,7 +232,7 @@ EN:
 Parallel hashing. Helps when CPU-bound, less when I/O-bound (HDD/NAS).
 
 
-## Copy threads (Default: 2)
+### Copy threads (Default: 2)
 
 DE:
 Parallelität beim Kopieren. Zu hoch kann HDD/NAS verschlechtern (Seek/Overhead).
@@ -241,12 +241,12 @@ EN:
 Parallel copying. Too high can hurt HDD/NAS (seek/overhead).
 
 
-## Hash chunk (MB) (Default: 4)
+### Hash chunk (MB) (Default: 4)
 
-### DE:
+DE:
 Blockgröße fürs Lesen beim Hashing. Größer kann große Dateien beschleunigen, Default ist meist ok.
 
-### EN:
+EN:
 Read block size for hashing. Larger can speed up large files; default is usually fine.
 
 ---
