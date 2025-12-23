@@ -1,8 +1,4 @@
-# Volume Backup Sorter – Manual (DE/EN)
-
-**Datum / Date:** 2025-12-19  
-
----
+# Volume Backup Sorter
 
 # 1. Zweck / Purpose
 
