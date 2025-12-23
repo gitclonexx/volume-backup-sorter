@@ -3,6 +3,9 @@ from pathlib import Path
 from PyInstaller.building.datastruct import TOC
 from PyInstaller.compat import is_win
 
+# icon
+ICON_LINUX = "assets/linux/icon_512.png" 
+
 block_cipher = None
 
 APP_NAME = "volume-backup-sorter"
@@ -78,6 +81,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name=APP_NAME,
+    icon=ICON_LINUX,
     debug=False,
     console=False,
     strip=True,
