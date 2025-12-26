@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Volume Backup Sorter
+Comment=Safe, transparent, reproducible backups
+Exec=volume-backup-sorter
+Icon=volume-backup-sorter
+Terminal=false
+Categories=Utility;FileTools;
+StartupWMClass=volume-backup-sorter
